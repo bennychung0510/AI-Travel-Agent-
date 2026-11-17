@@ -1,5 +1,3 @@
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export default async (req) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
@@ -25,12 +23,11 @@ export default async (req) => {
       });
     }
 
-    // 主模型優先，若遇到 503 伺服器過載或 429 額度限制，自動切換至備援模型
+    // 僅使用高速 Flash 系列，確保在 Netlify 10 秒限制內完成
     const candidateModels = model
-      ? [model, "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro"]
-      : ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.8-pro"];
+      ? [model, "gemini-3.8-flash", "gemini-3.8-flash-lite"]
+      : ["gemini-3.8-flash", "gemini-3.8-flash-lite"];
 
-    // 去除重複模型名稱
     const modelsToTry = [...new Set(candidateModels)];
     let lastErrorMessage = "Google API 暫時無法回應";
     let lastStatus = 500;
@@ -39,51 +36,62 @@ export default async (req) => {
       const currentModel = modelsToTry[i];
       const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
 
-      const googleRes = await fetch(googleUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
+      // 首次嘗試設為 4.5 秒逾時，留足時間給備援模型；最後一次設為 4.8 秒
+      const timeoutMs = i === 0 ? 4500 : 4800;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const googleRes = await fetch(googleUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [{ text: prompt }],
+              },
+            ],
+          }),
+        });
+
+        clearTimeout(timeoutId);
+        const data = await googleRes.json();
+
+        if (googleRes.ok) {
+          const replyText =
+            data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          return new Response(
+            JSON.stringify({ text: replyText, model: currentModel }),
             {
-              parts: [{ text: prompt }],
-            },
-          ],
-        }),
-      });
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
 
-      const data = await googleRes.json();
+        lastStatus = googleRes.status;
+        lastErrorMessage = data.error?.message || lastErrorMessage;
 
-      if (googleRes.ok) {
-        const replyText =
-          data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        return new Response(
-          JSON.stringify({ text: replyText, model: currentModel }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }
-        );
+        // 若為暫時過載 (503)、請求過於頻繁 (429) 或模型暫不可用 (404)，立即切換下一個模型
+        if ([503, 429, 404].includes(googleRes.status) && i < modelsToTry.length - 1) {
+          continue;
+        }
+        break;
+      } catch (fetchErr) {
+        clearTimeout(timeoutId);
+        if (fetchErr.name === "AbortError") {
+          lastStatus = 504;
+          lastErrorMessage = "Google 模型回應超時，請再按一次重試";
+          if (i < modelsToTry.length - 1) continue;
+        } else {
+          throw fetchErr;
+        }
       }
-
-      lastStatus = googleRes.status;
-      lastErrorMessage = data.error?.message || lastErrorMessage;
-
-      // 若為暫時過載 (503)、請求過於頻繁 (429) 或模型暫不可用 (404)，等待 1 秒後自動嘗試下一個備援模型
-      if ([503, 429, 404].includes(googleRes.status) && i < modelsToTry.length - 1) {
-        await sleep(1000);
-        continue;
-      }
-
-      break;
     }
 
     return new Response(
-      JSON.stringify({
-        error:
-          lastStatus === 503
-            ? "Google AI 伺服器目前極度繁忙，已自動重試但仍過載，請稍候 10 秒再試一次。"
-            : lastErrorMessage,
-      }),
+      JSON.stringify({ error: lastErrorMessage }),
       { status: lastStatus, headers: { "Content-Type": "application/json" } }
     );
   } catch (err) {
