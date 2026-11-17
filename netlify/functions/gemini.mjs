@@ -1,52 +1,45 @@
-const encoder = new TextEncoder();
-
-async function callGeminiOnce(model, prompt, apiKey, useNoThinking = true) {
+async function callGemini(model, prompt, apiKey, genConfig, timeoutMs = 8500) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const body = {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  const payload = {
     contents: [{ parts: [{ text: prompt }] }],
   };
-  if (useNoThinking) {
-    body.generationConfig = {
-      thinkingConfig: { thinkingBudget: 0 },
-    };
+  if (genConfig) {
+    payload.generationConfig = genConfig;
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  return { ok: res.ok, status: res.status, data };
-}
-
-async function findFallbackFlashModel(apiKey, excludeModel) {
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
-    );
-    if (!res.ok) return null;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+    });
+    clearTimeout(timer);
     const data = await res.json();
-    const models = data.models || [];
-    const alt = models.find(
-      (m) =>
-        m.name &&
-        !m.name.endsWith(`/${excludeModel}`) &&
-        m.name.toLowerCase().includes("flash") &&
-        Array.isArray(m.supportedGenerationMethods) &&
-        m.supportedGenerationMethods.includes("generateContent")
-    );
-    return alt ? alt.name.replace(/^models\//, "") : null;
-  } catch {
-    return null;
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") {
+      return {
+        ok: false,
+        status: 504,
+        data: { error: { message: "模型回應逾時，請再按一次重試" } },
+      };
+    }
+    throw err;
   }
 }
 
 export default async (req) => {
+  const jsonHeaders = { "Content-Type": "application/json; charset=utf-8" };
+
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
       status: 405,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
+      headers: jsonHeaders,
     });
   }
 
@@ -54,97 +47,76 @@ export default async (req) => {
   if (!apiKey) {
     return new Response(
       JSON.stringify({ error: "伺服器尚未設定 GEMINI_API_KEY 環境變數" }),
-      { status: 500, headers: { "Content-Type": "application/json; charset=utf-8" } }
+      { status: 500, headers: jsonHeaders }
     );
   }
 
-  let bodyData;
   try {
-    bodyData = await req.json();
-  } catch {
-    return new Response(JSON.stringify({ error: "請求格式錯誤" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
+    const { prompt, model } = await req.json();
+    if (!prompt) {
+      return new Response(JSON.stringify({ error: "缺少 prompt 內容" }), {
+        status: 400,
+        headers: jsonHeaders,
+      });
+    }
+
+    const primaryModel = model || "gemini-3.8-flash";
+    const optimizedPrompt = `${prompt}\n\n（請以繁體中文精簡重點條列回覆，控制於 350 字以內以確保快速載入。）`;
+
+    // 1. 優先關閉思考延遲以極速回應
+    let result = await callGemini(
+      primaryModel,
+      optimizedPrompt,
+      apiKey,
+      { thinkingConfig: { thinkingBudget: 0 }, maxOutputTokens: 1024 },
+      8500
+    );
+
+    // 2. 若該型號不支援 thinkingBudget 參數 (HTTP 400)，改用標準參數重試
+    if (!result.ok && result.status === 400) {
+      result = await callGemini(
+        primaryModel,
+        optimizedPrompt,
+        apiKey,
+        { maxOutputTokens: 1024 },
+        8000
+      );
+    }
+
+    // 3. 若遇到 503 暫時過載或 429，短暫等待後重試一次
+    if (!result.ok && (result.status === 503 || result.status === 429)) {
+      await new Promise((r) => setTimeout(r, 600));
+      result = await callGemini(
+        primaryModel,
+        optimizedPrompt,
+        apiKey,
+        { maxOutputTokens: 1024 },
+        7500
+      );
+    }
+
+    if (result.ok) {
+      const replyText =
+        result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      return new Response(JSON.stringify({ text: replyText }), {
+        status: 200,
+        headers: jsonHeaders,
+      });
+    }
+
+    const errMsg =
+      result.status === 503
+        ? "Google AI 伺服器目前暫時繁忙，請稍候幾秒再按一次。"
+        : result.data?.error?.message || "Google API 呼叫失敗";
+
+    return new Response(JSON.stringify({ error: errMsg }), {
+      status: result.status,
+      headers: jsonHeaders,
+    });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 500,
+      headers: jsonHeaders,
     });
   }
-
-  const { prompt, model } = bodyData;
-  if (!prompt) {
-    return new Response(JSON.stringify({ error: "缺少 prompt 內容" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json; charset=utf-8" },
-    });
-  }
-
-  const primaryModel = model || "gemini-3.8-flash";
-
-  // 使用 ReadableStream 啟用 Netlify 串流模式，徹底突破 10 秒同步超時限制
-  const stream = new ReadableStream({
-    async start(controller) {
-      // 每 2 秒送出一個空白字元保活（JSON.parse 會自動忽略前導空白）
-      const keepAlive = setInterval(() => {
-        try {
-          controller.enqueue(encoder.encode(" "));
-        } catch {}
-      }, 2000);
-
-      try {
-        // 1. 關閉多餘思考延遲以極速回應
-        let result = await callGeminiOnce(primaryModel, prompt, apiKey, true);
-
-        // 2. 若該模型不支援 thinkingConfig 參數，自動改用預設參數重試
-        if (!result.ok && result.status === 400) {
-          const msg = (result.data?.error?.message || "").toLowerCase();
-          if (msg.includes("thinking") || msg.includes("unknown name")) {
-            result = await callGeminiOnce(primaryModel, prompt, apiKey, false);
-          }
-        }
-
-        // 3. 若遇到 503 暫時過載或 429，等待 1 秒後重試
-        if (!result.ok && (result.status === 503 || result.status === 429)) {
-          await new Promise((r) => setTimeout(r, 1000));
-          result = await callGeminiOnce(primaryModel, prompt, apiKey, true);
-        }
-
-        // 4. 若型號回傳 404，自動查詢帳號支援的可用 Flash 模型
-        if (!result.ok && result.status === 404) {
-          const fallback = await findFallbackFlashModel(apiKey, primaryModel);
-          if (fallback) {
-            result = await callGeminiOnce(fallback, prompt, apiKey, false);
-          }
-        }
-
-        clearInterval(keepAlive);
-
-        if (result.ok) {
-          const replyText =
-            result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          controller.enqueue(encoder.encode(JSON.stringify({ text: replyText })));
-        } else {
-          const errMsg =
-            result.status === 503
-              ? "Google AI 伺服器目前暫時繁忙，請稍候幾秒再按一次。"
-              : result.data?.error?.message || "Google API 呼叫失敗";
-          controller.enqueue(
-            encoder.encode(JSON.stringify({ text: `⚠️ ${errMsg}` }))
-          );
-        }
-      } catch (err) {
-        clearInterval(keepAlive);
-        controller.enqueue(
-          encoder.encode(JSON.stringify({ text: `⚠️ 發生錯誤：${err.message}` }))
-        );
-      } finally {
-        controller.close();
-      }
-    },
-  });
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-cache",
-    },
-  });
 };
