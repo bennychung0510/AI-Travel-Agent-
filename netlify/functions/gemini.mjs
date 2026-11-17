@@ -15,7 +15,7 @@ export default async (req) => {
   }
 
   try {
-    const { prompt } = await req.json();
+    const { prompt, model } = await req.json();
     if (!prompt) {
       return new Response(JSON.stringify({ error: "缺少 prompt 內容" }), {
         status: 400,
@@ -23,7 +23,9 @@ export default async (req) => {
       });
     }
 
-    const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    // 預設使用 Google 官方最新主力模型 gemini-3.8-flash
+    const selectedModel = model || "gemini-3.8-flash";
+    const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
     const googleRes = await fetch(googleUrl, {
       method: "POST",
@@ -51,7 +53,7 @@ export default async (req) => {
     const replyText =
       data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    return new Response(JSON.stringify({ text: replyText }), {
+    return new Response(JSON.stringify({ text: replyText, model: selectedModel }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
