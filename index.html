@@ -865,7 +865,12 @@
         <input type="hidden" id="hotelFormId">
         
         <div>
-          <label class="font-bold text-iberia-ink block mb-1">酒店名稱 *</label>
+          <div class="flex flex-wrap items-center justify-between gap-1 mb-1">
+            <label class="font-bold text-iberia-ink block">酒店名稱 *</label>
+            <button type="button" id="btnFreeAutoFillHotel" onclick="autoFillPlaceInfoFromFreeApis('hotel')" class="text-[11px] text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-md font-bold flex items-center gap-1 transition-colors shadow-2xs" title="透過開放資料庫免費抓取酒店官網、精準地圖、相片與地址（0 AI 額度消耗）">
+              <i class="ph-bold ph-magnifying-glass"></i> 🔍 免費自動搜尋填入（官網＋地圖＋相片＋地址）
+            </button>
+          </div>
           <input type="text" id="hotelFormName" required placeholder="例如：Sercotel Hotel Rosellon" class="w-full px-3 py-2 bg-white border editorial-border rounded-lg focus:outline-none font-bold">
         </div>
 
@@ -1130,8 +1135,13 @@
       <form onsubmit="handlePostEditSubmit(event)" class="space-y-3.5 text-xs">
         <input type="hidden" id="postEditId">
         <div>
-          <label class="font-bold text-iberia-ink block mb-1">標題 *</label>
-          <input type="text" id="postEditTitle" required class="w-full px-3 py-2 bg-white border editorial-border rounded-lg font-bold">
+          <div class="flex flex-wrap items-center justify-between gap-1 mb-1">
+            <label class="font-bold text-iberia-ink block">標題 *</label>
+            <button type="button" id="btnFreeAutoFillPost" onclick="autoFillPlaceInfoFromFreeApis('post')" class="text-[11px] text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-md font-bold flex items-center gap-1 transition-colors shadow-2xs" title="透過維基百科、Wikidata 與 OpenStreetMap 免費抓取官網、地圖與簡介（0 AI 額度消耗）">
+              <i class="ph-bold ph-magnifying-glass"></i> 🔍 免費自動搜尋填入（官網＋地圖＋簡介）
+            </button>
+          </div>
+          <input type="text" id="postEditTitle" required placeholder="例如：聖家堂 Sagrada Família 或 萊羅書店 Livraria Lello" class="w-full px-3 py-2 bg-white border editorial-border rounded-lg font-bold">
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
@@ -1207,8 +1217,13 @@
           </select>
         </div>
         <div>
-          <label class="font-bold text-iberia-ink block mb-1">行程名稱 / 地點 *</label>
-          <input type="text" id="formTitleInput" required placeholder="例如：米拉之家 Casa Milà 或 AVE 高速火車" class="w-full px-3 py-2 bg-white border editorial-border rounded-lg focus:ring-2 focus:ring-iberia-cotto focus:outline-none">
+          <div class="flex flex-wrap items-center justify-between gap-1 mb-1">
+            <label class="font-bold text-iberia-ink block">行程名稱 / 地點 *</label>
+            <button type="button" id="btnFreeAutoFillItem" onclick="autoFillPlaceInfoFromFreeApis('item')" class="text-[11px] text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 px-2.5 py-0.5 rounded-md font-bold flex items-center gap-1 transition-colors shadow-2xs" title="透過維基百科、Wikidata 與 OpenStreetMap 免費自動抓取官網、地圖、實景相片與簡介（0 AI 額度消耗）">
+              <i class="ph-bold ph-magnifying-glass"></i> 🔍 免費自動搜尋填入（官網＋地圖＋相片＋簡介）
+            </button>
+          </div>
+          <input type="text" id="formTitleInput" required placeholder="例如：米拉之家 Casa Milà 或 Cerveceria Catalana" class="w-full px-3 py-2 bg-white border editorial-border rounded-lg focus:ring-2 focus:ring-iberia-cotto focus:outline-none">
         </div>
         
         <div class="grid grid-cols-2 gap-3">
@@ -1957,7 +1972,14 @@
       return cityFallback[cityKey] || cityFallback.barcelona;
     }
 
-    function autoGeneratePhotoForCurrentForm() {
+    function hasSpecificDictionaryPhoto(title) {
+      if (!title) return false;
+      const clean = title.trim();
+      const keys = Object.keys(accuratePhotoDictionary);
+      return keys.some(k => clean.includes(k));
+    }
+
+    async function autoGeneratePhotoForCurrentForm() {
       const title = document.getElementById('formTitleInput').value.trim();
       const dayId = document.getElementById('formDaySelect').value;
       const currentDay = itineraryData.find(d => d.id === dayId);
@@ -1968,7 +1990,18 @@
         return;
       }
 
-      const photoUrl = generateAccuratePhotoUrl(title, targetCity);
+      let photoUrl = hasSpecificDictionaryPhoto(title) ? generateAccuratePhotoUrl(title, targetCity) : "";
+      if (!photoUrl && typeof fetchFreePlaceMetadata === 'function') {
+        showToast("🔍 正在從維基圖庫搜尋實景相片...");
+        try {
+          const meta = await fetchFreePlaceMetadata(title, targetCity);
+          if (meta && meta.image) photoUrl = meta.image;
+        } catch (e) {}
+      }
+      if (!photoUrl) {
+        photoUrl = generateAccuratePhotoUrl(title, targetCity);
+      }
+
       if (photoUrl) {
         document.getElementById('formImageUrl').value = photoUrl;
         const previewImg = document.getElementById('formImagePreview');
@@ -1976,13 +2009,13 @@
         previewImg.src = photoUrl;
         previewImg.classList.remove('hidden');
         emptyIcon.classList.add('hidden');
-        showToast("✨ 已依地點自動生成精準相片！");
+        showToast("✨ 已依地點自動配對實景相片！");
       } else {
         showToast("未找到特定相片，建議使用拍照上載！");
       }
     }
 
-    function autoGeneratePhotoForHotelForm() {
+    async function autoGeneratePhotoForHotelForm() {
       const name = document.getElementById('hotelFormName').value.trim();
       const cityKey = document.getElementById('hotelFormCity').value;
 
@@ -1991,7 +2024,18 @@
         return;
       }
 
-      const photoUrl = generateAccuratePhotoUrl(name, cityKey);
+      let photoUrl = hasSpecificDictionaryPhoto(name) ? generateAccuratePhotoUrl(name, cityKey) : "";
+      if (!photoUrl && typeof fetchFreePlaceMetadata === 'function') {
+        showToast("🔍 正在搜尋酒店實景相片...");
+        try {
+          const meta = await fetchFreePlaceMetadata(name, cityKey);
+          if (meta && meta.image) photoUrl = meta.image;
+        } catch (e) {}
+      }
+      if (!photoUrl) {
+        photoUrl = generateAccuratePhotoUrl(name, cityKey);
+      }
+
       if (photoUrl) {
         document.getElementById('hotelFormImage').value = photoUrl;
         const previewImg = document.getElementById('hotelImagePreview');
@@ -5410,30 +5454,45 @@
       showToast(`已排入 ${targetDay.date}！`);
     }
 
-    function openVaultItemModal(mode) {
+    async function openVaultItemModal(mode) {
       const title = prompt("請輸入餐廳名稱：");
       if (!title) return;
       const cityKey = prompt("請輸入城市（barcelona / sevilla / porto / lisbon）：", "barcelona");
-      const notes = prompt("請輸入特色備註：", "");
+      const notes = prompt("請輸入特色備註（留空將自動從免費資料庫搜尋填入）：", "");
 
       recordHistory();
 
+      const cleanTitle = title.trim();
+      const cleanCity = (cityKey || "barcelona").trim().toLowerCase();
       const newItem = {
         id: "rest-" + Date.now(),
-        cityKey: cityKey || "barcelona",
+        cityKey: cleanCity,
         category: "food",
-        title: title.trim(),
+        title: cleanTitle,
         notes: notes ? notes.trim() : "",
         booking: "not_needed",
         bookingUrl: "",
-        mapUrl: generateAccurateMapUrl(title.trim(), cityKey || "barcelona"),
-        image: generateAccuratePhotoUrl(title.trim(), cityKey || "barcelona")
+        mapUrl: generateAccurateMapUrl(cleanTitle, cleanCity),
+        image: generateAccuratePhotoUrl(cleanTitle, cleanCity)
       };
 
       restaurantsVault.unshift(newItem);
       saveData('restaurants');
       renderRestaurantsVault();
-      showToast("已存入餐廳暫存庫！");
+      showToast("已存入餐廳暫存庫！正在背景補充免費地點資訊...");
+
+      try {
+        const meta = await fetchFreePlaceMetadata(cleanTitle, cleanCity);
+        if (meta) {
+          if (meta.website) newItem.bookingUrl = meta.website;
+          if (meta.mapUrl) newItem.mapUrl = meta.mapUrl;
+          if (meta.image) newItem.image = meta.image;
+          if (!newItem.notes && meta.description) newItem.notes = meta.description;
+          saveData('restaurants');
+          renderRestaurantsVault();
+          showToast("✨ 已自動補齊餐廳地圖、相片與資訊！");
+        }
+      } catch (e) {}
     }
 
     function deleteVaultItem(vaultType, id) {
@@ -6272,22 +6331,471 @@
     }
 
     // ==========================================
-    // GEMINI AI (透過 Netlify Functions 免 VPN 呼叫)
+    // 免費公開資料庫自動搜尋引擎 (Wikipedia + Wikidata + Wikimedia Commons + OpenStreetMap)
+    // 零成本、免 API Key、香港直連免 VPN、不消耗 Gemini 額度
     // ==========================================
-    async function askGemini(promptText) {
+    const officialBookingUrlDictionary = {
+      "聖家堂": "https://sagradafamilia.org/en/tickets",
+      "Sagrada": "https://sagradafamilia.org/en/tickets",
+      "奎爾公園": "https://parkguell.barcelona/en/buy-tickets",
+      "Park Güell": "https://parkguell.barcelona/en/buy-tickets",
+      "巴特略之家": "https://www.casabatllo.es/en/online-tickets/",
+      "Casa Batlló": "https://www.casabatllo.es/en/online-tickets/",
+      "米拉之家": "https://www.lapedrera.com/en/visits",
+      "Casa Milà": "https://www.lapedrera.com/en/visits",
+      "La Pedrera": "https://www.lapedrera.com/en/visits",
+      "畢卡索": "https://museupicassobcn.cat/en/plan-your-visit/buy-tickets",
+      "Picasso": "https://museupicassobcn.cat/en/plan-your-visit/buy-tickets",
+      "諾坎普": "https://www.fcbarcelona.com/en/tickets/camp-nou-experience",
+      "Camp Nou": "https://www.fcbarcelona.com/en/tickets/camp-nou-experience",
+      "FC Barcelona": "https://www.fcbarcelona.com/en/tickets/camp-nou-experience",
+      "加泰羅尼亞音樂宮": "https://www.palaumusica.cat/en",
+      "Palau de la Música": "https://www.palaumusica.cat/en",
+      "塞維亞大教堂": "https://www.catedraldesevilla.es/",
+      "Giralda": "https://www.catedraldesevilla.es/",
+      "塞維亞王宮": "https://www.alcazarsevilla.org/en/",
+      "Alcázar": "https://www.alcazarsevilla.org/en/",
+      "萊羅書店": "https://www.livrarialello.pt/en/ticket-voucher",
+      "Lello": "https://www.livrarialello.pt/en/ticket-voucher",
+      "證券交易所宮": "https://palaciodabolsa.com/en/",
+      "Palácio da Bolsa": "https://palaciodabolsa.com/en/",
+      "貝倫塔": "https://bilheteira.patrimoniocultural.pt/",
+      "Belém": "https://bilheteira.patrimoniocultural.pt/",
+      "熱羅尼莫斯": "https://bilheteira.patrimoniocultural.pt/",
+      "Jerónimos": "https://bilheteira.patrimoniocultural.pt/",
+      "佩納宮": "https://www.parquesdesintra.pt/en/",
+      "Pena": "https://www.parquesdesintra.pt/en/",
+      "摩爾人城堡": "https://www.parquesdesintra.pt/en/",
+      "雷加萊拉宮": "https://www.regaleira.pt/en/",
+      "Regaleira": "https://www.regaleira.pt/en/",
+      "Batea": "https://batea.com/",
+      "Bar Cañete": "https://www.barcanete.com/en/",
+      "Cervejaria Ramiro": "https://www.cervejariaramiro.com/",
+      "Ramiro": "https://www.cervejariaramiro.com/",
+      "Brasão": "https://www.brasao.pt/",
+      "Meia-Nau": "https://www.meianau.pt/",
+      "Casa Guedes": "https://casaguedes.pt/",
+      "Parking Pizza": "https://www.parkingpizza.com/",
+      "Jon Cake": "https://joncake.es/",
+      "JONCAKE": "https://joncake.es/",
+      "Sercotel Hotel Rosellon": "https://www.sercotelhoteles.com/en/hotel-rosellon",
+      "Las Casas de la Judería": "https://www.casasdelajuderiasevilla.com/",
+      "InterContinental Porto": "https://www.ihg.com/intercontinental/hotels/gb/en/porto/opoha/hoteldetail",
+      "Memmo Alfama": "https://www.memmohotels.com/alfama/"
+    };
+
+    function extractCleanSearchTerms(rawTitle) {
+      const cleaned = (rawTitle || '')
+        .replace(/^(午餐|晚餐|早餐|下午茶|宵夜|搭乘|前往|參觀|遊覽)[:：]?\s*/g, '')
+        .replace(/^🏨\s*入住手續[:：]?\s*/g, '')
+        .replace(/^🧳\s*退房\/行李寄存[:：]?\s*/g, '')
+        .replace(/\(.*?\)|（.*?）/g, ' ')
+        .trim();
+
+      // 分離中文與外文（拉丁字母）部分，方便雙語查詢維基與 OpenStreetMap
+      const latinMatch = cleaned.match(/[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9\s'’&.,-]{1,}/g);
+      const latinPart = latinMatch ? latinMatch.join(' ').trim() : '';
+      const zhMatch = cleaned.match(/[一-龥]{2,}/g);
+      const zhPart = zhMatch ? zhMatch.join(' ').trim() : '';
+
+      return {
+        full: cleaned || rawTitle.trim(),
+        latin: latinPart,
+        zh: zhPart
+      };
+    }
+
+    async function queryWikipediaSummaryAndImage(searchTerm, lang = 'zh') {
+      if (!searchTerm) return null;
+      try {
+        const variantParam = lang === 'zh' ? '&variant=zh-hk' : '';
+        const apiUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&gsrlimit=1&prop=pageimages|extracts|pageprops&exintro=1&explaintext=1&exchars=240&piprop=thumbnail&pithumbsize=800${variantParam}&format=json&origin=*`;
+        const res = await fetch(apiUrl);
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!data.query || !data.query.pages) return null;
+        const pages = Object.values(data.query.pages);
+        if (!pages.length) return null;
+        const page = pages[0];
+        return {
+          title: page.title || '',
+          extract: (page.extract || '').replace(/\s+/g, ' ').trim(),
+          image: page.thumbnail?.source || '',
+          wikibaseItem: page.pageprops?.wikibase_item || ''
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function queryWikidataEntityDetails(qid) {
+      if (!qid) return null;
+      try {
+        const url = `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}&props=claims&format=json&origin=*`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const data = await res.json();
+        const entity = data.entities?.[qid];
+        if (!entity || !entity.claims) return null;
+
+        // P856: 官方網站
+        let officialWebsite = '';
+        const p856 = entity.claims.P856;
+        if (Array.isArray(p856) && p856.length > 0) {
+          officialWebsite = p856[0]?.mainsnak?.datavalue?.value || '';
+        }
+
+        // P18: 維基共享資源代表圖片
+        let commonsImage = '';
+        const p18 = entity.claims.P18;
+        if (Array.isArray(p18) && p18.length > 0) {
+          const fileName = p18[0]?.mainsnak?.datavalue?.value || '';
+          if (fileName) {
+            commonsImage = `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(fileName)}?width=800`;
+          }
+        }
+
+        // P625: 地理座標
+        let lat = null, lon = null;
+        const p625 = entity.claims.P625;
+        if (Array.isArray(p625) && p625.length > 0) {
+          const coord = p625[0]?.mainsnak?.datavalue?.value;
+          if (coord && coord.latitude && coord.longitude) {
+            lat = coord.latitude;
+            lon = coord.longitude;
+          }
+        }
+
+        return { officialWebsite, commonsImage, lat, lon };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function queryOpenStreetMapPlace(searchTerm, cityEn, countryEn) {
+      if (!searchTerm) return null;
+      try {
+        const q = `${searchTerm} ${cityEn || ''} ${countryEn || ''}`.trim();
+        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&limit=1&extratags=1&addressdetails=1&accept-language=zh-HK,zh,en,es,pt`;
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const arr = await res.json();
+        if (!Array.isArray(arr) || arr.length === 0) return null;
+        const hit = arr[0];
+        const extra = hit.extratags || {};
+        const website = extra.website || extra['contact:website'] || extra.url || '';
+        const openingHours = extra.opening_hours || '';
+        const phone = extra.phone || extra['contact:phone'] || '';
+        const wikidata = extra.wikidata || '';
+        const cuisine = extra.cuisine || '';
+
+        return {
+          lat: hit.lat,
+          lon: hit.lon,
+          displayName: hit.display_name || '',
+          website,
+          openingHours,
+          phone,
+          wikidata,
+          cuisine,
+          type: hit.type || hit.category || ''
+        };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function queryWikimediaCommonsPhoto(searchTerm) {
+      if (!searchTerm) return '';
+      try {
+        const url = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(searchTerm)}&gsrnamespace=6&gsrlimit=1&prop=imageinfo&iiprop=url&iiurlwidth=800&format=json&origin=*`;
+        const res = await fetch(url);
+        if (!res.ok) return '';
+        const data = await res.json();
+        if (!data.query || !data.query.pages) return '';
+        const pages = Object.values(data.query.pages);
+        return pages[0]?.imageinfo?.[0]?.thumburl || pages[0]?.imageinfo?.[0]?.url || '';
+      } catch (e) {
+        return '';
+      }
+    }
+
+    async function fetchFreePlaceMetadata(rawTitle, cityKey = 'barcelona') {
+      const terms = extractCleanSearchTerms(rawTitle);
+      const cityInfo = cityMap[cityKey] || { zh: '巴塞隆納', en: 'Barcelona', country: 'Spain' };
+      const countryEn = (cityKey === 'porto' || cityKey === 'lisbon') ? 'Portugal' : 'Spain';
+
+      let result = {
+        website: '',
+        mapUrl: '',
+        image: '',
+        description: '',
+        detailedHtml: ''
+      };
+
+      // 1. 先檢查內建精選字典（0 毫秒即時命中）
+      for (const [k, url] of Object.entries(officialBookingUrlDictionary)) {
+        if (rawTitle.includes(k) || terms.full.includes(k)) {
+          result.website = url;
+          break;
+        }
+      }
+      if (hasSpecificDictionaryPhoto(rawTitle)) {
+        result.image = generateAccuratePhotoUrl(rawTitle, cityKey);
+      }
+      for (const [k, info] of Object.entries(placeDescriptionEnrichment)) {
+        if (rawTitle.includes(k) || k.includes(terms.full)) {
+          result.description = info.summary;
+          result.detailedHtml = info.content || `<p>${info.summary}</p>`;
+          break;
+        }
+      }
+
+      // 2. 並行呼叫 Wikipedia (繁體中文 / 英文) 與 OpenStreetMap Nominatim
+      const primaryQuery = terms.latin ? `${terms.latin} ${cityInfo.en}` : `${terms.full} ${cityInfo.zh}`;
+      const zhWikiPromise = queryWikipediaSummaryAndImage(terms.zh || terms.full, 'zh');
+      const enWikiPromise = queryWikipediaSummaryAndImage(terms.latin || `${terms.full} ${cityInfo.en}`, 'en');
+      const osmPromise = queryOpenStreetMapPlace(terms.latin || terms.full, cityInfo.en, countryEn);
+
+      const [zhWiki, enWiki, osmData] = await Promise.all([zhWikiPromise, enWikiPromise, osmPromise]);
+
+      const wikiData = (zhWiki && zhWiki.extract) ? zhWiki : enWiki;
+      const qid = (zhWiki && zhWiki.wikibaseItem) || (enWiki && enWiki.wikibaseItem) || (osmData && osmData.wikidata) || '';
+
+      // 3. 若取得 Wikidata QID，讀取 P856 官網、P18 實景相片與 P625 座標
+      let wikidataDetails = null;
+      if (qid) {
+        wikidataDetails = await queryWikidataEntityDetails(qid);
+      }
+
+      // 整合官方網站
+      if (!result.website) {
+        result.website = (wikidataDetails && wikidataDetails.officialWebsite) || (osmData && osmData.website) || '';
+      }
+
+      // 整合精準 Google Maps 導航連結（結合地點名稱與城市／座標）
+      const mapQueryTitle = terms.latin || terms.full;
+      if (osmData && osmData.lat && osmData.lon) {
+        result.mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQueryTitle + ' ' + cityInfo.en)}`;
+      } else if (wikidataDetails && wikidataDetails.lat && wikidataDetails.lon) {
+        result.mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQueryTitle + ' ' + cityInfo.en)}`;
+      } else {
+        result.mapUrl = generateAccurateMapUrl(rawTitle, cityKey);
+      }
+
+      // 整合實景相片
+      if (!result.image) {
+        result.image =
+          (zhWiki && zhWiki.image) ||
+          (enWiki && enWiki.image) ||
+          (wikidataDetails && wikidataDetails.commonsImage) ||
+          '';
+      }
+      if (!result.image) {
+        const commonsImg = await queryWikimediaCommonsPhoto(primaryQuery);
+        result.image = commonsImg || generateAccuratePhotoUrl(rawTitle, cityKey);
+      }
+
+      // 整合描述與營業時間／地址資訊
+      const extraMetaParts = [];
+      if (osmData && osmData.openingHours) {
+        extraMetaParts.push(`🕒 營業時間：${osmData.openingHours}`);
+      }
+      if (osmData && osmData.phone) {
+        extraMetaParts.push(`📞 電話：${osmData.phone}`);
+      }
+      if (osmData && osmData.displayName) {
+        const shortAddr = osmData.displayName.split(',').slice(0, 3).join(',').trim();
+        if (shortAddr) extraMetaParts.push(`📍 地址：${shortAddr}`);
+      }
+
+      if (!result.description) {
+        if (wikiData && wikiData.extract) {
+          result.description = wikiData.extract;
+          if (extraMetaParts.length > 0) {
+            result.description += ` （${extraMetaParts.join(' · ')}）`;
+          }
+        } else if (extraMetaParts.length > 0) {
+          result.description = `${cityInfo.zh}地點資訊：${extraMetaParts.join(' · ')}`;
+        }
+      } else if (extraMetaParts.length > 0 && !result.description.includes('營業時間') && !result.description.includes('地址')) {
+        result.description += ` （${extraMetaParts.join(' · ')}）`;
+      }
+
+      if (!result.detailedHtml) {
+        const htmlLines = [];
+        if (result.description) htmlLines.push(`<p>${result.description}</p>`);
+        if (extraMetaParts.length > 0) {
+          htmlLines.push(`<p class="text-xs text-stone-600 mt-1">${extraMetaParts.join('<br>')}</p>`);
+        }
+        result.detailedHtml = htmlLines.join('') || `<p>${rawTitle}</p>`;
+      }
+
+      return result;
+    }
+
+    // 綁定於「新增/編輯行程」、「編輯酒店」、「編輯貼文」視窗的免費自動搜尋填入按鈕
+    async function autoFillPlaceInfoFromFreeApis(targetType = 'item') {
+      let btn = null;
+      let rawTitle = '';
+      let cityKey = 'barcelona';
+
+      if (targetType === 'item') {
+        btn = document.getElementById('btnFreeAutoFillItem');
+        rawTitle = document.getElementById('formTitleInput')?.value.trim() || '';
+        const dayId = document.getElementById('formDaySelect')?.value;
+        const currentDay = itineraryData.find(d => d.id === dayId);
+        cityKey = currentDay ? currentDay.cityKey : 'barcelona';
+        if (!rawTitle) {
+          showToast("請先輸入「行程名稱 / 地點」！");
+          document.getElementById('formTitleInput')?.focus();
+          return;
+        }
+      } else if (targetType === 'hotel') {
+        btn = document.getElementById('btnFreeAutoFillHotel');
+        rawTitle = document.getElementById('hotelFormName')?.value.trim() || '';
+        cityKey = document.getElementById('hotelFormCity')?.value || 'barcelona';
+        if (!rawTitle) {
+          showToast("請先輸入「酒店名稱」！");
+          document.getElementById('hotelFormName')?.focus();
+          return;
+        }
+      } else if (targetType === 'post') {
+        btn = document.getElementById('btnFreeAutoFillPost');
+        rawTitle = document.getElementById('postEditTitle')?.value.trim() || '';
+        cityKey = document.getElementById('postEditCity')?.value || 'barcelona';
+        if (!rawTitle) {
+          showToast("請先輸入「標題」（景點或餐廳名稱）！");
+          document.getElementById('postEditTitle')?.focus();
+          return;
+        }
+      }
+
+      const originalBtnHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 免費資料庫搜尋中...';
+      }
+
+      try {
+        const meta = await fetchFreePlaceMetadata(rawTitle, cityKey);
+        const filledFields = [];
+
+        if (targetType === 'item') {
+          if (meta.website) {
+            document.getElementById('formBookingUrl').value = meta.website;
+            filledFields.push('官網');
+          }
+          if (meta.mapUrl) {
+            document.getElementById('formMapUrl').value = meta.mapUrl;
+            filledFields.push('地圖');
+          }
+          if (meta.image) {
+            document.getElementById('formImageUrl').value = meta.image;
+            const previewImg = document.getElementById('formImagePreview');
+            const emptyIcon = document.getElementById('formImageEmptyIcon');
+            if (previewImg && emptyIcon) {
+              previewImg.src = meta.image;
+              previewImg.classList.remove('hidden');
+              emptyIcon.classList.add('hidden');
+            }
+            filledFields.push('相片');
+          }
+          if (meta.description) {
+            document.getElementById('formNotes').value = meta.description;
+            filledFields.push('簡介');
+          }
+        } else if (targetType === 'hotel') {
+          if (meta.website) {
+            document.getElementById('hotelFormBookingUrl').value = meta.website;
+            filledFields.push('官網');
+          }
+          if (meta.mapUrl) {
+            document.getElementById('hotelFormMapUrl').value = meta.mapUrl;
+            filledFields.push('地圖');
+          }
+          if (meta.image) {
+            document.getElementById('hotelFormImage').value = meta.image;
+            const previewImg = document.getElementById('hotelImagePreview');
+            const emptyIcon = document.getElementById('hotelImageEmptyIcon');
+            if (previewImg && emptyIcon) {
+              previewImg.src = meta.image;
+              previewImg.classList.remove('hidden');
+              emptyIcon.classList.add('hidden');
+            }
+            filledFields.push('相片');
+          }
+          if (meta.description) {
+            const notesEl = document.getElementById('hotelFormNotes');
+            if (!notesEl.value.trim()) {
+              notesEl.value = meta.description;
+            } else if (!notesEl.value.includes(meta.description)) {
+              notesEl.value = `${notesEl.value.trim()}
+${meta.description}`;
+            }
+            filledFields.push('備註');
+          }
+        } else if (targetType === 'post') {
+          if (meta.description) {
+            document.getElementById('postEditSummary').value = meta.description;
+            filledFields.push('摘要');
+          }
+          if (meta.detailedHtml) {
+            document.getElementById('postEditContent').value = meta.detailedHtml;
+            filledFields.push('詳細描述');
+          }
+          if (meta.mapUrl) {
+            document.getElementById('postEditMapUrl').value = meta.mapUrl;
+            filledFields.push('地圖');
+          }
+          if (meta.website) {
+            const linksEl = document.getElementById('postEditLinks');
+            const newLinkLine = `官方網站|${meta.website}`;
+            if (!linksEl.value.includes(meta.website)) {
+              linksEl.value = linksEl.value.trim() ? `${linksEl.value.trim()}
+${newLinkLine}` : newLinkLine;
+            }
+            filledFields.push('官網連結');
+          }
+        }
+
+        if (filledFields.length > 0) {
+          showToast(`✅ 已免費自動填入：${filledFields.join('、')}！（0 AI 額度消耗）`);
+        } else {
+          showToast("已填入基本地圖連結，如需攻略可點右側 AI 撰寫！");
+        }
+      } catch (err) {
+        showToast("免費資料庫查詢失敗：" + err.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalBtnHtml;
+        }
+      }
+    }
+
+    // ==========================================
+    // GEMINI AI (透過 Netlify Functions 免 VPN 呼叫，支援 fast / deep 分流)
+    // ==========================================
+    async function askGemini(promptText, mode = 'fast') {
       const response = await fetch("/.netlify/functions/gemini", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prompt: promptText }),
+        body: JSON.stringify({ prompt: promptText, mode }),
       });
 
+      if (response.status === 502 || response.status === 504) {
+        throw new Error("AI 伺服器回應超時（超過 10 秒），請再按一次重試");
+      }
+
+      const rawText = await response.text();
       let data = {};
       try {
-        data = await response.json();
+        data = JSON.parse(rawText);
       } catch (err) {
-        throw new Error("無法解析伺服器回應，請確認已部署 Netlify Functions（/.netlify/functions/gemini）");
+        throw new Error(`無法解析伺服器回應 (HTTP ${response.status})，請稍後再試`);
       }
 
       if (!response.ok) {
@@ -6298,18 +6806,17 @@
     }
 
     function buildTripContextSummary() {
-      let summary = "【西葡 13 日行程背景資料】\n";
+      let summary = "【西葡13日行程摘要】
+";
       if (Array.isArray(hotelsData) && hotelsData.length > 0) {
-        summary += "入住酒店：\n";
-        hotelsData.forEach(h => {
-          summary += `- ${h.checkIn} 至 ${h.checkOut} (${h.cityKey}): ${h.name}\n`;
-        });
+        summary += "酒店：" + hotelsData.map(h => `${h.checkIn}-${h.checkOut}(${h.cityKey}):${h.name}`).join('；') + "
+";
       }
       if (Array.isArray(itineraryData) && itineraryData.length > 0) {
-        summary += "\n每日行程：\n";
         itineraryData.forEach((d, idx) => {
-          const itemsStr = (d.items || []).map(i => `${i.time ? i.time + ' ' : ''}${i.title}`).join(' ➔ ');
-          summary += `Day ${idx + 1} (${d.date} ${d.cityKey} - ${d.title}): ${itemsStr || '尚未排定'}\n`;
+          const itemsStr = (d.items || []).map(i => `${i.time ? i.time : ''}${i.title}`).join('→');
+          summary += `D${idx + 1}(${d.date} ${d.cityKey}):${itemsStr || '空'}
+`;
         });
       }
       return summary;
@@ -6327,7 +6834,7 @@
     function setAiPresetPrompt(type) {
       const input = document.getElementById('aiAssistantInput');
       if (type === 'check_route') {
-        input.value = "請幫我檢視目前的西葡行程安排，有沒有哪一天的動線不夠順路、時間太趕，或需要注意冬季日落與聖誕節期間的營業時間？請用繁體中文條列建議。";
+        input.value = "請幫我檢視目前的西葡行程安排，有沒有哪一天的動線不夠順路、時間太趕，或需要注意冬季日落與聖誕節期間的營業時間？請用繁體中文精簡條列建議。";
       } else if (type === 'food_rec') {
         input.value = "根據我們入住的巴塞隆納、塞維亞、波多與里斯本酒店位置，請分別推薦每座城市 2 間步行可達、評分高且地道必吃的餐廳或 Tapas 小館（請附必點菜色）。";
       } else if (type === 'rain_backup') {
@@ -6345,11 +6852,17 @@
       btn.disabled = true;
 
       try {
-        const reply = await askGemini("請用繁體中文（廣東話/香港書面語皆可）簡短同「鍾 & 陳仔」打個招呼，祝我哋 12 月西班牙同葡萄牙 13 日冬季之旅旅途愉快！（50字以內）");
-        output.textContent = "✅ 連線成功！\n\n" + reply;
+        const reply = await askGemini("請用繁體中文（廣東話/香港書面語皆可）簡短同「鍾 & 陳仔」打個招呼，祝我哋 12 月西班牙同葡萄牙 13 日冬季之旅旅途愉快！（50字以內）", "fast");
+        output.textContent = "✅ 連線成功！
+
+" + reply;
         showToast("✨ Gemini API 連線測試成功！");
       } catch (error) {
-        output.textContent = "❌ 連線失敗：" + error.message + "\n\n請確認：\n1. 專案內已建立 netlify/functions/gemini.mjs\n2. Netlify 後台已設定 GEMINI_API_KEY 環境變數並重新部署";
+        output.textContent = "❌ 連線失敗：" + error.message + "
+
+請確認：
+1. 專案內已建立 netlify/functions/gemini.mjs
+2. Netlify 後台已設定 GEMINI_API_KEY 環境變數並重新部署";
         showToast("連線失敗，請查看錯誤提示");
       } finally {
         btn.disabled = false;
@@ -6370,7 +6883,7 @@
       }
 
       wrapper.classList.remove('hidden');
-      output.textContent = "⏳ Gemini 正在思考並整理建議...";
+      output.textContent = "⏳ Gemini 正在整理建議...";
       btn.disabled = true;
       const originalBtnHtml = btn.innerHTML;
       btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 思考中...';
@@ -6378,9 +6891,12 @@
       try {
         let finalPrompt = userQuestion;
         if (includeContext) {
-          finalPrompt = `${buildTripContextSummary()}\n---\n使用者問題：${userQuestion}\n請以繁體中文回答，內容務實精簡、重點清晰。`;
+          finalPrompt = `${buildTripContextSummary()}
+---
+問題：${userQuestion}
+請以繁體中文精簡條列回答（控制在 300 字內）。`;
         }
-        const reply = await askGemini(finalPrompt);
+        const reply = await askGemini(finalPrompt, "fast");
         output.textContent = reply;
       } catch (error) {
         output.textContent = "❌ 發生錯誤：" + error.message;
@@ -6398,7 +6914,7 @@
       showToast("已複製 AI 回覆內容！");
     }
 
-    // 在「新增/編輯行程」視窗一鍵生成景點/餐廳簡介
+    // 在「新增/編輯行程」視窗一鍵生成景點/餐廳簡介（快速模式）
     async function aiGenerateItemNotes() {
       const title = document.getElementById('formTitleInput')?.value.trim();
       const dayId = document.getElementById('formDaySelect')?.value;
@@ -6420,8 +6936,8 @@
       btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 生成中...';
 
       try {
-        const prompt = `我正在規劃西班牙與葡萄牙之旅。請用繁體中文為「${cityInfo.zh} (${cityInfo.en})」的「${title}」（類別：${cat}）撰寫一段 60 至 90 字的精簡實用行程備註，包含：特色亮點、必吃菜色或必看重點，以及預約/參觀注意事項。直接輸出純文字內容，不要標題或前言。`;
-        const reply = await askGemini(prompt);
+        const prompt = `請用繁體中文為「${cityInfo.zh} (${cityInfo.en})」的「${title}」（類別：${cat}）撰寫 60 至 80 字的精簡實用旅遊貼士（包含必吃菜色或必看重點、排隊或預約提醒）。直接輸出純文字，不要標題。`;
+        const reply = await askGemini(prompt, "fast");
         notesEl.value = reply.trim();
         showToast("✨ 已由 AI 自動生成行程簡介！");
       } catch (error) {
@@ -6432,7 +6948,7 @@
       }
     }
 
-    // 在「編輯酒店」視窗一鍵生成周邊與入住貼士
+    // 在「編輯酒店」視窗一鍵生成周邊與入住貼士（快速模式）
     async function aiGenerateHotelNotes() {
       const name = document.getElementById('hotelFormName')?.value.trim();
       const cityKey = document.getElementById('hotelFormCity')?.value || 'barcelona';
@@ -6451,8 +6967,8 @@
       btn.innerHTML = '<i class="ph-bold ph-spinner animate-spin"></i> 生成中...';
 
       try {
-        const prompt = `請用繁體中文簡短介紹位於「${cityInfo.zh} (${cityInfo.en})」的酒店「${name}」（約 60-80 字），包含：所在區域位置優勢、附近最近的地鐵/車站或步行可達的地標，以及實用入住小貼士。直接輸出純文字，不要前言。`;
-        const reply = await askGemini(prompt);
+        const prompt = `請用繁體中文簡短介紹位於「${cityInfo.zh} (${cityInfo.en})」的酒店「${name}」（約 60-80 字），包含所在區域優勢、附近最近地鐵/車站或地標，以及實用入住貼士。直接輸出純文字。`;
+        const reply = await askGemini(prompt, "fast");
         notesEl.value = reply.trim();
         showToast("✨ 已由 AI 補充酒店周邊與貼士！");
       } catch (error) {
@@ -6463,7 +6979,7 @@
       }
     }
 
-    // 在「編輯手帳貼文」視窗一鍵生成摘要與 HTML 攻略
+    // 在「編輯手帳貼文」視窗一鍵生成摘要與 HTML 攻略（快速模式）
     async function aiGeneratePostContent() {
       const title = document.getElementById('postEditTitle')?.value.trim();
       const cityKey = document.getElementById('postEditCity')?.value || 'barcelona';
@@ -6486,16 +7002,17 @@
         const prompt = `請針對位於「${cityInfo.zh} (${cityInfo.en})」的旅遊主題或地點「${title}」，用繁體中文輸出兩部分內容，並嚴格使用「===分隔線===」隔開：
 第一部分：50字以內的精簡卡片摘要（純文字）。
 ===分隔線===
-第二部分：詳細旅遊攻略（使用簡單的 HTML 標籤如 <p>, <ul>, <li>, <strong> 排版，包含必看/必吃重點、交通或營業時間提醒）。不要輸出 markdown 的 \`\`\`html 符號。`;
+第二部分：150字以內的精簡旅遊攻略（使用簡單 HTML 標籤如 <p>, <ul>, <li>, <strong> 排版，包含必看/必吃重點、交通或營業時間提醒）。不要輸出 markdown 的 \`\`\`html 符號。`;
 
-        const reply = await askGemini(prompt);
+        const reply = await askGemini(prompt, "fast");
         const parts = reply.split('===分隔線===');
         if (parts.length >= 2) {
           summaryEl.value = parts[0].replace(/^第一部分[:：]?\s*/i, '').trim();
           contentEl.value = parts[1].replace(/^第二部分[:：]?\s*/i, '').replace(/```html|```/g, '').trim();
         } else {
           summaryEl.value = reply.slice(0, 80).trim();
-          contentEl.value = `<p>${reply.trim().replace(/\n/g, '</p><p>')}</p>`;
+          contentEl.value = `<p>${reply.trim().replace(/
+/g, '</p><p>')}</p>`;
         }
         showToast("✨ 已由 AI 自動生成摘要與詳細攻略！");
       } catch (error) {
