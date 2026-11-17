@@ -1,3 +1,57 @@
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function callGenerateContent(model, prompt, apiKey, timeoutMs) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+      }),
+    });
+    clearTimeout(timer);
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === "AbortError") {
+      return {
+        ok: false,
+        status: 504,
+        data: { error: { message: "模型回應逾時，請再按一次重試" } },
+      };
+    }
+    throw err;
+  }
+}
+
+async function findFallbackFlashModel(apiKey, excludeModel) {
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    const models = data.models || [];
+    const alt = models.find(
+      (m) =>
+        m.name &&
+        !m.name.endsWith(`/${excludeModel}`) &&
+        m.name.toLowerCase().includes("flash") &&
+        Array.isArray(m.supportedGenerationMethods) &&
+        m.supportedGenerationMethods.includes("generateContent")
+    );
+    return alt ? alt.name.replace(/^models\//, "") : null;
+  } catch {
+    return null;
+  }
+}
+
 export default async (req) => {
   if (req.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
@@ -23,77 +77,43 @@ export default async (req) => {
       });
     }
 
-    // 僅使用高速 Flash 系列，確保在 Netlify 10 秒限制內完成
-    const candidateModels = model
-      ? [model, "gemini-3.8-flash", "gemini-3.8-flash-lite"]
-      : ["gemini-3.8-flash", "gemini-3.8-flash-lite"];
+    const primaryModel = model || "gemini-3.8-flash";
 
-    const modelsToTry = [...new Set(candidateModels)];
-    let lastErrorMessage = "Google API 暫時無法回應";
-    let lastStatus = 500;
+    // 1. 呼叫已驗證可用的 gemini-3.8-flash（給予 7.5 秒充足時間生成完整行程建議）
+    let result = await callGenerateContent(primaryModel, prompt, apiKey, 7500);
 
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const currentModel = modelsToTry[i];
-      const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
+    // 2. 若遇到 503 暫時過載或 429，短暫等待 500ms 後重試同模型
+    if (!result.ok && (result.status === 503 || result.status === 429)) {
+      await sleep(500);
+      result = await callGenerateContent(primaryModel, prompt, apiKey, 2000);
+    }
 
-      // 首次嘗試設為 4.5 秒逾時，留足時間給備援模型；最後一次設為 4.8 秒
-      const timeoutMs = i === 0 ? 4500 : 4800;
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        const googleRes = await fetch(googleUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [{ text: prompt }],
-              },
-            ],
-          }),
-        });
-
-        clearTimeout(timeoutId);
-        const data = await googleRes.json();
-
-        if (googleRes.ok) {
-          const replyText =
-            data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-          return new Response(
-            JSON.stringify({ text: replyText, model: currentModel }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            }
-          );
-        }
-
-        lastStatus = googleRes.status;
-        lastErrorMessage = data.error?.message || lastErrorMessage;
-
-        // 若為暫時過載 (503)、請求過於頻繁 (429) 或模型暫不可用 (404)，立即切換下一個模型
-        if ([503, 429, 404].includes(googleRes.status) && i < modelsToTry.length - 1) {
-          continue;
-        }
-        break;
-      } catch (fetchErr) {
-        clearTimeout(timeoutId);
-        if (fetchErr.name === "AbortError") {
-          lastStatus = 504;
-          lastErrorMessage = "Google 模型回應超時，請再按一次重試";
-          if (i < modelsToTry.length - 1) continue;
-        } else {
-          throw fetchErr;
-        }
+    // 3. 若型號回傳 404，自動向 Google ListModels 取得帳號支援的可用 Flash 模型
+    if (!result.ok && result.status === 404) {
+      const fallbackModel = await findFallbackFlashModel(apiKey, primaryModel);
+      if (fallbackModel) {
+        result = await callGenerateContent(fallbackModel, prompt, apiKey, 7500);
       }
     }
 
-    return new Response(
-      JSON.stringify({ error: lastErrorMessage }),
-      { status: lastStatus, headers: { "Content-Type": "application/json" } }
-    );
+    if (result.ok) {
+      const replyText =
+        result.data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      return new Response(JSON.stringify({ text: replyText }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const errMsg =
+      result.status === 503
+        ? "Google AI 伺服器目前暫時繁忙，請稍候幾秒再按一次。"
+        : result.data?.error?.message || "Google API 呼叫失敗";
+
+    return new Response(JSON.stringify({ error: errMsg }), {
+      status: result.status,
+      headers: { "Content-Type": "application/json" },
+    });
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
